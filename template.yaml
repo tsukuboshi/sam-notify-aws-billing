@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Notify every day of AWS billing
+
+Parameters:
+  DefaultKmsId:
+    Type: String
+  SlackWebhookUrl:
+    Type: String
+    Default: ""
+  LineAccessToken:
+    Type: String
+    Default: ""
+
+Conditions:
+  HasSlackWebhookUrl: !Not [!Equals [!Ref SlackWebhookUrl, ""]]
+  HasLineAccessToken: !Not [!Equals [!Ref LineAccessToken, ""]]
+
+Resources:
+  # https://docs.aws.amazon.com/ja_jp/AWSCloudFormation/latest/UserGuide/aws-resource-iam-role.html
+  # https://docs.aws.amazon.com/ja_jp/step-functions/latest/dg/tutorial-lambda-state-machine-cloudformation.html
+  BillingIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: role-notify-aws-billing
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: policy-notify-aws-billing
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "ce:GetCostAndUsage"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+              - Effect: Allow
+                Action:
+                  - "ssm:GetParameter*"
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/*"
+              - Effect: Allow
+                Action:
+                  - "kms:Decrypt"
+                Resource: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${DefaultKmsId}"
+
+
+  Function:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: function-notify-aws-billing
+      CodeUri: function/
+      Handler: index.lambda_handler
+      Runtime: python3.9
+      Role: !GetAtt BillingIamRole.Arn
+      Timeout: 60
+      Layers:
+        - arn:aws:lambda:ap-northeast-1:133490724326:layer:AWS-Parameters-and-Secrets-Lambda-Extension:4
+      Environment:
+        Variables:
+          SLACK_WEBHOOK_URL: HasSlackWebhookUrl
+            - !Ref SlackWebhookUrl
+            - AWS::NoValue
+          LINE_ACCESS_TOKEN: HasLineAccessToken
+            - !Ref LineAccessToken
+            - AWS::NoValue
+      Events:
+        Notify:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 0 * * ? *)
+
+Outputs:
+  FunctionArn:
+    Description: "Lambda Function ARN"
+    Value: !GetAtt Function.Arn
+
+  FunctionIamRole:
+    Description: "Implicit IAM Role created for Hello World function"
+    Value: !GetAtt BillingIamRole.Arn
