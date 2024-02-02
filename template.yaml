@@ -68,12 +68,14 @@ Resources:
         - arn:aws:lambda:ap-northeast-1:133490724326:layer:AWS-Parameters-and-Secrets-Lambda-Extension:4
       Environment:
         Variables:
-          SLACK_WEBHOOK_URL: HasSlackWebhookUrl
+          SLACK_WEBHOOK_URL: !If
+            - HasSlackWebhookUrl
             - !Ref SlackWebhookUrl
-            - AWS::NoValue
-          LINE_ACCESS_TOKEN: HasLineAccessToken
+            - !Ref AWS::NoValue
+          LINE_ACCESS_TOKEN: !If
+            - HasLineAccessToken
             - !Ref LineAccessToken
-            - AWS::NoValue
+            - !Ref AWS::NoValue
       Events:
         Notify:
           Type: Schedule
