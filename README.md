@@ -1,4 +1,4 @@
-# notify-of-aws-billing
+# sam-notify-aws-billing
 
 ## 概要
 
