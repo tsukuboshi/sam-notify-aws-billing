@@ -1,28 +1,54 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Notify every day of AWS billing
+Description: Notify AWS billing
 
 Parameters:
-  DefaultKmsId:
-    Type: String
+  NotifyDaysInterval:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 30
+    Description: "Notify days interval"
   SlackWebhookUrl:
     Type: String
     Default: ""
+    NoEcho: true
+    Description: "Slack Webhook URL"
   LineAccessToken:
     Type: String
     Default: ""
+    NoEcho: true
+    Description: "LINE Access Token"
 
 Conditions:
   HasSlackWebhookUrl: !Not [!Equals [!Ref SlackWebhookUrl, ""]]
   HasLineAccessToken: !Not [!Equals [!Ref LineAccessToken, ""]]
 
 Resources:
-  # https://docs.aws.amazon.com/ja_jp/AWSCloudFormation/latest/UserGuide/aws-resource-iam-role.html
-  # https://docs.aws.amazon.com/ja_jp/step-functions/latest/dg/tutorial-lambda-state-machine-cloudformation.html
+  SlackWebhookSecret:
+    Type: AWS::SecretsManager::Secret
+    Condition : HasSlackWebhookUrl
+    Properties:
+      Description: "Slack Webhook URL"
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"info": ${SlackWebhookUrl}}'
+        GenerateStringKey: "info"
+      Name: !Sub /{AWS::StackName}-secret-notify-aws-billing/slack-webhook-url
+
+  LineAccessTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    Condition : HasLineAccessToken
+    Properties:
+      Description: "LINE Access Token"
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"info": ${LineAccessToken}}'
+        GenerateStringKey: "info"
+      Name: !Sub /{AWS::StackName}-secret-notify-aws-billing/line-access-token
+
   BillingIamRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: role-notify-aws-billing
+      RoleName: !Sub ${AWS::StackName}-role-notify-aws-billing
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -30,38 +56,49 @@ Resources:
             Principal:
               Service: lambda.amazonaws.com
             Action: "sts:AssumeRole"
-      Policies:
-        - PolicyName: policy-notify-aws-billing
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - "ce:GetCostAndUsage"
-                Resource: "*"
-              - Effect: Allow
-                Action:
-                  - "logs:CreateLogGroup"
-                  - "logs:CreateLogStream"
-                  - "logs:PutLogEvents"
-                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
-              - Effect: Allow
-                Action:
-                  - "ssm:GetParameter*"
-                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/*"
-              - Effect: Allow
-                Action:
-                  - "kms:Decrypt"
-                Resource: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${DefaultKmsId}"
 
+  BillingIamPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub ${AWS::StackName}-policy-notify-aws-billing
+      Roles:
+        - !Ref BillingIamRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - "ce:GetCostAndUsage"
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - "logs:CreateLogGroup"
+              - "logs:CreateLogStream"
+              - "logs:PutLogEvents"
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+          - Effect: Allow
+            Action:
+              - "secretsmanager:GetResourcePolicy"
+              - "secretsmanager:GetSecretValue"
+              - "secretsmanager:DescribeSecret"
+              - "secretsmanager:ListSecretVersionIds"
+            Resource:
+              - !If
+                - HasSlackWebhookUrl
+                - !Ref SlackWebhookSecret
+                - !Ref AWS::NoValue
+              - !If
+                - HasLineAccessToken
+                - !Ref LineAccessTokenSecret
+                - !Ref AWS::NoValue
 
-  Function:
+  BillingFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: function-notify-aws-billing
+      FunctionName: !Sub ${AWS::StackName}-function-notify-aws-billing
       CodeUri: function/
-      Handler: index.lambda_handler
-      Runtime: python3.9
+      Handler: index.handler
+      Runtime: python3.11
       Role: !GetAtt BillingIamRole.Arn
       Timeout: 60
       Layers:
@@ -70,23 +107,36 @@ Resources:
         Variables:
           SLACK_WEBHOOK_URL: !If
             - HasSlackWebhookUrl
-            - !Ref SlackWebhookUrl
+            - !Sub /${AWS::StackName}-secret-notify-aws-billing/slack-webhook-url
             - !Ref AWS::NoValue
           LINE_ACCESS_TOKEN: !If
             - HasLineAccessToken
-            - !Ref LineAccessToken
+            - !Sub /${AWS::StackName}-secret-notify-aws-billing/line-access-token
             - !Ref AWS::NoValue
-      Events:
-        Notify:
-          Type: Schedule
-          Properties:
-            Schedule: cron(0 0 * * ? *)
+
+  BillingEventBridgeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: default
+      Name: !Sub ${AWS::StackName}-rule-notify-aws-billing
+      ScheduleExpression: !Sub cron(0 0 */${NotifyDaysInterval} * ? *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt BillingFunction.Arn
+          Id: BillingFunction
+
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref BillingFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt BillingEventBridgeRule.Arn
 
 Outputs:
   FunctionArn:
     Description: "Lambda Function ARN"
-    Value: !GetAtt Function.Arn
-
-  FunctionIamRole:
-    Description: "Implicit IAM Role created for Hello World function"
-    Value: !GetAtt BillingIamRole.Arn
+    Value: !GetAtt BillingFunction.Arn
+  EventBridgeRuleArn:
+    Description: "EventBridge Rule ARN"
+    Value: !GetAtt BillingEventBridgeRule.Arn
