@@ -13,18 +13,37 @@ logger.setLevel(logging.getLevelName(os.getenv("LOG_LEVEL", "INFO")))
 
 # Lambdaのエントリーポイント
 def lambda_handler(event, context) -> None:
-    # 合計とサービス毎の請求額を取得し、メッセージを作成する
-    logger.info("Get billing information...")
-    (title, detail) = get_billing()
+    client = boto3.client("ce", region_name="us-east-1")
+
+    # 合計とサービス毎の請求額を取得する
+    total_billing = get_total_billing(client)
+    service_billings = get_service_billings(client)
+
+    # 投稿用のメッセージを作成する
+    (title, detail) = create_message(total_billing, service_billings)
 
     try:
         # SlackのWebhook URLが設定されている場合は、Slackにメッセージを投稿する
         if os.environ.get("SLACK_WEBHOOK_URL_PATH"):
-            logger.info("Get slack webhook url...")
             url = get_secret(os.environ.get("SLACK_WEBHOOK_URL_PATH"), "info")
 
             logger.info("Post message to slack...")
-            post_slack(title, detail, url)
+            url = url
+            payload = {
+                "text": title,
+                "blocks": [
+                    {"type": "header", "text": {"type": "plain_text", "text": title}},
+                    {
+                        "type": "section",
+                        "text": {"type": "mrkdwn", "text": ":aws-logo:  *サービス別利用料金*"},
+                    },
+                    {"type": "section", "text": {"type": "mrkdwn", "text": detail}},
+                    {"type": "divider"},
+                ],
+            }
+            data = json.dumps(payload).encode()
+
+            send_request(url, data)
 
         # LINEのアクセストークンが設定されている場合は、LINEにメッセージを投稿する
         if os.environ.get("LINE_ACCESS_TOKEN_PATH"):
@@ -32,7 +51,12 @@ def lambda_handler(event, context) -> None:
             token = get_secret(os.environ.get("LINE_ACCESS_TOKEN_PATH"), "info")
 
             logger.info("Post message to line...")
-            post_line(title, detail, token)
+            url = "https://notify-api.line.me/api/notify"
+            payload = {"message": f"{title}\n\n{detail}"}
+            data = parse.urlencode(payload).encode("utf-8")
+            headers = {"Authorization": "Bearer %s" % token}
+
+            send_request(url, data, headers)
 
         # いずれの送信先も設定されていない場合はエラーを出力する
         if not os.environ.get("SLACK_WEBHOOK_URL_PATH") and not os.environ.get("LINE_ACCESS_TOKEN_PATH"):
@@ -41,16 +65,6 @@ def lambda_handler(event, context) -> None:
     except Exception as e:
         logger.exception("Exception occurred: %s", e)
         raise e
-
-
-# 請求額を取得し、メッセージを作成する関数
-def get_billing() -> Tuple[str, str]:
-    client = boto3.client("ce", region_name="us-east-1")
-
-    total_billing = get_total_billing(client)
-    service_billings = get_service_billings(client)
-    (title, detail) = create_message(total_billing, service_billings)
-    return (title, detail)
 
 
 # 合計の請求額を取得する関数
@@ -143,36 +157,6 @@ def get_secret(secret_name: str, secret_key: str) -> str:
     secret_json = json.loads(secret_config)["SecretString"]
     secret_value = json.loads(secret_json)[secret_key]
     return secret_value
-
-
-# Slackにメッセージを投稿する関数
-def post_slack(title: str, detail: str, url: str) -> None:
-    url = url
-    payload = {
-        "text": title,
-        "blocks": [
-            {"type": "header", "text": {"type": "plain_text", "text": title}},
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": ":aws-logo:  *サービス別利用料金*"},
-            },
-            {"type": "section", "text": {"type": "mrkdwn", "text": detail}},
-            {"type": "divider"},
-        ],
-    }
-    data = json.dumps(payload).encode()
-
-    send_request(url, data)
-
-
-# LINEにメッセージを投稿する関数
-def post_line(title: str, detail: str, token: str) -> None:
-    url = "https://notify-api.line.me/api/notify"
-    payload = {"message": f"{title}\n\n{detail}"}
-    data = parse.urlencode(payload).encode("utf-8")
-    headers = {"Authorization": "Bearer %s" % token}
-
-    send_request(url, data, headers)
 
 
 # HTTPリクエストを送信する関数
