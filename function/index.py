@@ -26,9 +26,6 @@ def lambda_handler(event, context) -> None:
         # SlackのWebhook URLが設定されている場合は、Slackにメッセージを投稿する
         if os.environ.get("SLACK_WEBHOOK_URL_PATH"):
             url = get_secret(os.environ.get("SLACK_WEBHOOK_URL_PATH"), "info")
-
-            logger.info("Post message to slack...")
-            url = url
             payload = {
                 "text": title,
                 "blocks": [
@@ -47,10 +44,7 @@ def lambda_handler(event, context) -> None:
 
         # LINEのアクセストークンが設定されている場合は、LINEにメッセージを投稿する
         if os.environ.get("LINE_ACCESS_TOKEN_PATH"):
-            logger.info("Get line access token...")
             token = get_secret(os.environ.get("LINE_ACCESS_TOKEN_PATH"), "info")
-
-            logger.info("Post message to line...")
             url = "https://notify-api.line.me/api/notify"
             payload = {"message": f"{title}\n\n{detail}"}
             data = parse.urlencode(payload).encode("utf-8")
