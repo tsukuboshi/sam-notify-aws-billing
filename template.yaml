@@ -97,7 +97,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${AWS::StackName}-function-notify-aws-billing
       CodeUri: function/
-      Handler: index.handler
+      Handler: index.lambda_handler
       Runtime: python3.11
       Role: !GetAtt BillingIamRole.Arn
       Timeout: 60

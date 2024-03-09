@@ -12,7 +12,7 @@ logger.setLevel(logging.getLevelName(os.getenv("LOG_LEVEL", "INFO")))
 
 
 # Lambdaのエントリーポイント
-def handler(event, context) -> None:
+def lambda_handler(event, context) -> None:
     # 合計とサービス毎の請求額を取得し、メッセージを作成する
     logger.info("Get billing information...")
     (title, detail) = get_billing()
