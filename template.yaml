@@ -48,7 +48,7 @@ Resources:
       GenerateSecretString:
         SecretStringTemplate: !Sub '{"info": ${SlackWebhookUrl}}'
         GenerateStringKey: "info"
-      Name: !Sub /{AWS::StackName}-nab-secret/slack
+      Name: !Sub /${AWS::StackName}-nab-secret/slack
 
   NABSecretForLine:
     Type: AWS::SecretsManager::Secret
@@ -58,7 +58,7 @@ Resources:
       GenerateSecretString:
         SecretStringTemplate: !Sub '{"info": ${LineAccessToken}}'
         GenerateStringKey: "info"
-      Name: !Sub /{AWS::StackName}-nab-secret/line
+      Name: !Sub /${AWS::StackName}-nab-secret/line
 
   NABFunctionRole:
     Type: AWS::IAM::Role
@@ -142,7 +142,6 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub ${AWS::StackName}-nab-function
-      CodeUri: function/
       Handler: index.lambda_handler
       Runtime: python3.11
       Role: !GetAtt NABFunctionRole.Arn
@@ -157,12 +156,13 @@ Resources:
             - !Ref AWS::NoValue
           SLACK_SECRET_NAME: !If
             - OnSlack
-            - !Sub /{AWS::StackName}-nab-secret/slack
+            - !Sub /${AWS::StackName}-nab-secret/slack
             - !Ref AWS::NoValue
           LINE_SECRET_NAME: !If
             - OnLine
-            - !Sub /{AWS::StackName}-nab-secret/line
+            - !Sub /${AWS::StackName}-nab-secret/line
             - !Ref AWS::NoValue
+      CodeUri: function/
 
   NABRule:
     Type: AWS::Events::Rule
