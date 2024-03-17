@@ -24,15 +24,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
     (title, detail) = create_message(total_billing, service_billings)
 
     try:
-        mail_topic_arn = os.environ.get("MAIL_TOPIC_ARN")
+        email_topic_arn = os.environ.get("EMAIL_TOPIC_ARN")
         slack_secret_name = os.environ.get("SLACK_SECRET_NAME")
         line_secret_name = os.environ.get("LINE_SECRET_NAME")
 
         # メール用トピックが設定されている場合は、メール用トピックにメッセージを送信する
-        if mail_topic_arn:
+        if email_topic_arn:
             sns = boto3.client("sns")
             sns.publish(
-                TopicArn=mail_topic_arn,
+                TopicArn=email_topic_arn,
                 Subject=title,
                 Message=detail,
             )
@@ -64,7 +64,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
             send_request(webhook_url, data, headers)
 
         # いずれの送信先も設定されていない場合はエラーを出力する
-        if not mail_topic_arn and not slack_secret_name and not line_secret_name:
+        if not email_topic_arn and not slack_secret_name and not line_secret_name:
             logger.error(
                 "No destination to post message. Please set environment variables."
             )

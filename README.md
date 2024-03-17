@@ -2,7 +2,7 @@
 
 ## 概要
 
-Mail/Slack/LINEのいずれかに対して、メッセージ形式でAWS利用料金を通知します。
+Email/Slack/LINEのいずれかに対して、メッセージ形式でAWS利用料金を通知します。
 
 ## 構成図
 
@@ -18,7 +18,7 @@ sam build
 
 2. 以下コマンドで、SAMアプリをデプロイ
 
-- メールの場合
+- Eメールの場合
 
 ``` bash
 sam deploy --parameter-overrides \

@@ -9,7 +9,7 @@ Metadata:
           default: "Notification Settings"
         Parameters:
           - NotifyDaysInterval
-          - MailAddress
+          - EmailAddress
           - SlackWebhookUrl
           - LineAccessToken
 
@@ -20,10 +20,10 @@ Parameters:
     MinValue: 1
     MaxValue: 30
     Description: "Choose the interval of notification. (1-30)"
-  MailAddress:
+  EmailAddress:
     Type: String
     Default: ""
-    Description: "If you want to notify by mail, set Mail Address. If not, leave it blank."
+    Description: "If you want to notify by mail, set Email Address. If not, leave it blank."
   SlackWebhookUrl:
     Type: String
     Default: ""
@@ -36,18 +36,18 @@ Parameters:
     Description: "If you want to notify by LINE, set LINE Notify Access Token. If not, leave it blank."
 
 Conditions:
-  OnMail: !Not [!Equals [!Ref MailAddress, ""]]
+  OnEmail: !Not [!Equals [!Ref EmailAddress, ""]]
   OnSlack: !Not [!Equals [!Ref SlackWebhookUrl, ""]]
   OnLine: !Not [!Equals [!Ref LineAccessToken, ""]]
 
 Resources:
-  NABTopicToMail:
+  NABTopicToEmail:
     Type: AWS::SNS::Topic
-    Condition : OnMail
+    Condition : OnEmail
     Properties:
       TopicName: !Sub ${AWS::StackName}-nab-topic
       Subscription:
-        - Endpoint: !Ref MailAddress
+        - Endpoint: !Ref EmailAddress
           Protocol: email
 
   NABSecretForSlack:
@@ -98,9 +98,9 @@ Resources:
               - "logs:PutLogEvents"
             Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
 
-  NABMailPolicy:
+  NABEmailPolicy:
     Type: AWS::IAM::ManagedPolicy
-    Condition: OnMail
+    Condition: OnEmail
     Properties:
       ManagedPolicyName: !Sub ${AWS::StackName}-nab-mail-policy
       Roles:
@@ -111,7 +111,7 @@ Resources:
           - Effect: Allow
             Action:
               - "sns:publish"
-            Resource: !Ref NABTopicToMail
+            Resource: !Ref NABTopicToEmail
 
   NABSlackPolicy:
     Type: AWS::IAM::ManagedPolicy
@@ -143,7 +143,6 @@ Resources:
               - "secretsmanager:GetSecretValue"
             Resource: !Ref NABSecretForLine
 
-
   NABFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -157,8 +156,8 @@ Resources:
       Environment:
         Variables:
           MAIL_TOPIC_ARN: !If
-            - OnMail
-            - !Ref NABTopicToMail
+            - OnEmail
+            - !Ref NABTopicToEmail
             - !Ref AWS::NoValue
           SLACK_SECRET_NAME: !If
             - OnSlack
