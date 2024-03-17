@@ -2,6 +2,17 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: Notify AWS Billing (NAB)
 
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Notification Settings"
+        Parameters:
+          - NotifyDaysInterval
+          - MailAddress
+          - SlackWebhookUrl
+          - LineAccessToken
+
 Parameters:
   NotifyDaysInterval:
     Type: Number
@@ -12,7 +23,6 @@ Parameters:
   MailAddress:
     Type: String
     Default: ""
-    NoEcho: true
     Description: "If you want to notify by mail, set Mail Address. If not, leave it blank."
   SlackWebhookUrl:
     Type: String
@@ -45,9 +55,7 @@ Resources:
     Condition : OnSlack
     Properties:
       Description: "Slack Webhook URL"
-      GenerateSecretString:
-        SecretStringTemplate: !Sub '{"info": ${SlackWebhookUrl}}'
-        GenerateStringKey: "info"
+      SecretString: !Sub '{"info": "${SlackWebhookUrl}"}'
       Name: !Sub /${AWS::StackName}-nab-secret/slack
 
   NABSecretForLine:
@@ -55,9 +63,7 @@ Resources:
     Condition : OnLine
     Properties:
       Description: "LINE Access Token"
-      GenerateSecretString:
-        SecretStringTemplate: !Sub '{"info": ${LineAccessToken}}'
-        GenerateStringKey: "info"
+      SecretString: !Sub '{"info": "${LineAccessToken}"}'
       Name: !Sub /${AWS::StackName}-nab-secret/line
 
   NABFunctionRole:
