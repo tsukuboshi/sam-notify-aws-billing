@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Notify AWS billing
+Description: Notify AWS Billing (NAB)
 
 Parameters:
   NotifyDaysInterval:
@@ -8,47 +8,62 @@ Parameters:
     Default: 1
     MinValue: 1
     MaxValue: 30
-    Description: "Notify days interval"
+    Description: "Choose the interval of notification. (1-30)"
+  MailAddress:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: "If you want to notify by mail, set Mail Address. If not, leave it blank."
   SlackWebhookUrl:
     Type: String
     Default: ""
     NoEcho: true
-    Description: "Slack Webhook URL"
+    Description: "If you want to notify by Slack, set Slack Webhook URL. If not, leave it blank."
   LineAccessToken:
     Type: String
     Default: ""
     NoEcho: true
-    Description: "LINE Access Token"
+    Description: "If you want to notify by LINE, set LINE Notify Access Token. If not, leave it blank."
 
 Conditions:
-  HasSlackWebhookUrl: !Not [!Equals [!Ref SlackWebhookUrl, ""]]
-  HasLineAccessToken: !Not [!Equals [!Ref LineAccessToken, ""]]
+  OnMail: !Not [!Equals [!Ref MailAddress, ""]]
+  OnSlack: !Not [!Equals [!Ref SlackWebhookUrl, ""]]
+  OnLine: !Not [!Equals [!Ref LineAccessToken, ""]]
 
 Resources:
-  SlackWebhookSecret:
+  NABTopicToMail:
+    Type: AWS::SNS::Topic
+    Condition : OnMail
+    Properties:
+      TopicName: !Sub ${AWS::StackName}-nab-topic
+      Subscription:
+        - Endpoint: !Ref MailAddress
+          Protocol: email
+
+  NABSecretForSlack:
     Type: AWS::SecretsManager::Secret
-    Condition : HasSlackWebhookUrl
+    Condition : OnSlack
     Properties:
       Description: "Slack Webhook URL"
       GenerateSecretString:
         SecretStringTemplate: !Sub '{"info": ${SlackWebhookUrl}}'
         GenerateStringKey: "info"
-      Name: !Sub /{AWS::StackName}-secret-notify-aws-billing/slack-webhook-url
+      Name: !Sub /{AWS::StackName}-nab-secret/slack
 
-  LineAccessTokenSecret:
+  NABSecretForLine:
     Type: AWS::SecretsManager::Secret
-    Condition : HasLineAccessToken
+    Condition : OnLine
     Properties:
       Description: "LINE Access Token"
       GenerateSecretString:
         SecretStringTemplate: !Sub '{"info": ${LineAccessToken}}'
         GenerateStringKey: "info"
-      Name: !Sub /{AWS::StackName}-secret-notify-aws-billing/line-access-token
+      Name: !Sub /{AWS::StackName}-nab-secret/line
 
-  BillingIamRole:
+  NABFunctionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub ${AWS::StackName}-role-notify-aws-billing
+      RoleName: !Sub ${AWS::StackName}-nab-function-role
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -57,12 +72,12 @@ Resources:
               Service: lambda.amazonaws.com
             Action: "sts:AssumeRole"
 
-  BillingIamPolicy:
+  NABLogPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      ManagedPolicyName: !Sub ${AWS::StackName}-policy-notify-aws-billing
+      ManagedPolicyName: !Sub ${AWS::StackName}-nab-log-policy
       Roles:
-        - !Ref BillingIamRole
+        - !Ref NABFunctionRole
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -76,67 +91,102 @@ Resources:
               - "logs:CreateLogStream"
               - "logs:PutLogEvents"
             Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+
+  NABMailPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: OnMail
+    Properties:
+      ManagedPolicyName: !Sub ${AWS::StackName}-nab-mail-policy
+      Roles:
+        - !Ref NABFunctionRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
           - Effect: Allow
             Action:
-              - "secretsmanager:GetResourcePolicy"
-              - "secretsmanager:GetSecretValue"
-              - "secretsmanager:DescribeSecret"
-              - "secretsmanager:ListSecretVersionIds"
-            Resource:
-              - !If
-                - HasSlackWebhookUrl
-                - !Ref SlackWebhookSecret
-                - !Ref AWS::NoValue
-              - !If
-                - HasLineAccessToken
-                - !Ref LineAccessTokenSecret
-                - !Ref AWS::NoValue
+              - "sns:publish"
+            Resource: !Ref NABTopicToMail
 
-  BillingFunction:
+  NABSlackPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: OnSlack
+    Properties:
+      ManagedPolicyName: !Sub ${AWS::StackName}-nab-slack-policy
+      Roles:
+      - !Ref NABFunctionRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - "secretsmanager:GetSecretValue"
+            Resource: !Ref NABSecretForSlack
+
+  NABLinePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: OnLine
+    Properties:
+      ManagedPolicyName: !Sub ${AWS::StackName}-nab-line-policy
+      Roles:
+      - !Ref NABFunctionRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - "secretsmanager:GetSecretValue"
+            Resource: !Ref NABSecretForLine
+
+
+  NABFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub ${AWS::StackName}-function-notify-aws-billing
+      FunctionName: !Sub ${AWS::StackName}-nab-function
       CodeUri: function/
       Handler: index.lambda_handler
       Runtime: python3.11
-      Role: !GetAtt BillingIamRole.Arn
+      Role: !GetAtt NABFunctionRole.Arn
       Timeout: 60
       Layers:
         - arn:aws:lambda:ap-northeast-1:133490724326:layer:AWS-Parameters-and-Secrets-Lambda-Extension:4
       Environment:
         Variables:
-          SLACK_WEBHOOK_URL: !If
-            - HasSlackWebhookUrl
-            - !Sub /${AWS::StackName}-secret-notify-aws-billing/slack-webhook-url
+          MAIL_TOPIC_ARN: !If
+            - OnMail
+            - !Ref NABTopicToMail
             - !Ref AWS::NoValue
-          LINE_ACCESS_TOKEN: !If
-            - HasLineAccessToken
-            - !Sub /${AWS::StackName}-secret-notify-aws-billing/line-access-token
+          SLACK_SECRET_NAME: !If
+            - OnSlack
+            - !Sub /{AWS::StackName}-nab-secret/slack
+            - !Ref AWS::NoValue
+          LINE_SECRET_NAME: !If
+            - OnLine
+            - !Sub /{AWS::StackName}-nab-secret/line
             - !Ref AWS::NoValue
 
-  BillingEventBridgeRule:
+  NABRule:
     Type: AWS::Events::Rule
     Properties:
       EventBusName: default
-      Name: !Sub ${AWS::StackName}-rule-notify-aws-billing
+      Name: !Sub ${AWS::StackName}-nab-rule
       ScheduleExpression: !Sub cron(0 0 */${NotifyDaysInterval} * ? *)
       State: ENABLED
       Targets:
-        - Arn: !GetAtt BillingFunction.Arn
-          Id: BillingFunction
+        - Arn: !GetAtt NABFunction.Arn
+          Id: NABFunction
 
   PermissionForEventsToInvokeLambda:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref BillingFunction
+      FunctionName: !Ref NABFunction
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
-      SourceArn: !GetAtt BillingEventBridgeRule.Arn
+      SourceArn: !GetAtt NABRule.Arn
 
 Outputs:
   FunctionArn:
     Description: "Lambda Function ARN"
-    Value: !GetAtt BillingFunction.Arn
+    Value: !GetAtt NABFunction.Arn
   EventBridgeRuleArn:
     Description: "EventBridge Rule ARN"
-    Value: !GetAtt BillingEventBridgeRule.Arn
+    Value: !GetAtt NABRule.Arn

@@ -21,7 +21,7 @@ pyproject-autoflake = "^1.0.2"
 profile = "black"
 
 [tool.flake8]
-ignore = "E203,E501,W503,T499"
+extend-ignore = "E203, E501, W503"
 
 [tool.mypy]
 # common

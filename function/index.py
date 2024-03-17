@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from datetime import date, datetime, timedelta
-from typing import Tuple
+from typing import Any, Dict, MutableMapping, Optional, Tuple
 from urllib import parse, request
 
 import boto3
@@ -11,50 +11,71 @@ logger = logging.getLogger()
 logger.setLevel(logging.getLevelName(os.getenv("LOG_LEVEL", "INFO")))
 
 
-# Lambdaのエントリーポイント
-def lambda_handler(event, context) -> None:
-    client = boto3.client("ce", region_name="us-east-1")
+ce = boto3.client("ce", region_name="us-east-1")
 
+
+# Lambdaのエントリーポイント
+def lambda_handler(event: Dict[str, Any], context: Any) -> None:
     # 合計とサービス毎の請求額を取得する
-    total_billing = get_total_billing(client)
-    service_billings = get_service_billings(client)
+    total_billing = get_total_billing()
+    service_billings = get_service_billings()
 
     # 投稿用のメッセージを作成する
     (title, detail) = create_message(total_billing, service_billings)
 
     try:
+        mail_topic_arn = os.environ.get("MAIL_TOPIC_ARN")
+        slack_secret_name = os.environ.get("SLACK_SECRET_NAME")
+        line_secret_name = os.environ.get("LINE_SECRET_NAME")
+
+        sns = boto3.client("sns")
+
+        # メール用トピックが設定されている場合は、メール用トピックにメッセージを送信する
+        if mail_topic_arn:
+            sns.publish(
+                TopicArn=mail_topic_arn,
+                Subject=title,
+                Message=detail,
+            )
+
         # SlackのWebhook URLが設定されている場合は、Slackにメッセージを投稿する
-        if os.environ.get("SLACK_WEBHOOK_URL_PATH"):
-            url = get_secret(os.environ.get("SLACK_WEBHOOK_URL_PATH"), "info")
+        if slack_secret_name:
+            webhook_url = get_secret(slack_secret_name, "info")
             payload = {
                 "text": title,
                 "blocks": [
                     {"type": "header", "text": {"type": "plain_text", "text": title}},
                     {
                         "type": "section",
-                        "text": {"type": "mrkdwn", "text": ":aws-logo:  *サービス別利用料金*"},
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": ":aws-logo:  *サービス別利用料金*",
+                        },
                     },
                     {"type": "section", "text": {"type": "mrkdwn", "text": detail}},
                     {"type": "divider"},
                 ],
             }
             data = json.dumps(payload).encode()
+            headers = {"Content-Type": "application/json"}
 
-            send_request(url, data)
+            send_request(webhook_url, data, headers)
 
         # LINEのアクセストークンが設定されている場合は、LINEにメッセージを投稿する
-        if os.environ.get("LINE_ACCESS_TOKEN_PATH"):
-            token = get_secret(os.environ.get("LINE_ACCESS_TOKEN_PATH"), "info")
-            url = "https://notify-api.line.me/api/notify"
+        if line_secret_name:
+            access_token = get_secret(line_secret_name, "info")
+            webhook_url = "https://notify-api.line.me/api/notify"
             payload = {"message": f"{title}\n\n{detail}"}
             data = parse.urlencode(payload).encode("utf-8")
-            headers = {"Authorization": "Bearer %s" % token}
+            headers = {"Authorization": "Bearer %s" % access_token}
 
-            send_request(url, data, headers)
+            send_request(webhook_url, data, headers)
 
         # いずれの送信先も設定されていない場合はエラーを出力する
-        if not os.environ.get("SLACK_WEBHOOK_URL_PATH") and not os.environ.get("LINE_ACCESS_TOKEN_PATH"):
-            logger.error("No destination to post message. Please set environment variables.")
+        if not mail_topic_arn and not slack_secret_name and not line_secret_name:
+            logger.error(
+                "No destination to post message. Please set environment variables."
+            )
 
     except Exception as e:
         logger.exception("Exception occurred: %s", e)
@@ -62,10 +83,10 @@ def lambda_handler(event, context) -> None:
 
 
 # 合計の請求額を取得する関数
-def get_total_billing(client) -> dict:
+def get_total_billing() -> dict:
     (start_date, end_date) = get_total_cost_date_range()
 
-    response = client.get_cost_and_usage(
+    response = ce.get_cost_and_usage(
         TimePeriod={"Start": start_date, "End": end_date},
         Granularity="MONTHLY",
         Metrics=["AmortizedCost"],
@@ -78,10 +99,10 @@ def get_total_billing(client) -> dict:
 
 
 # サービス毎の請求額を取得する関数
-def get_service_billings(client) -> list:
+def get_service_billings() -> list:
     (start_date, end_date) = get_total_cost_date_range()
 
-    response = client.get_cost_and_usage(
+    response = ce.get_cost_and_usage(
         TimePeriod={"Start": start_date, "End": end_date},
         Granularity="MONTHLY",
         Metrics=["AmortizedCost"],
@@ -110,7 +131,7 @@ def create_message(total_billing: dict, service_billings: list) -> Tuple[str, st
 
     total = round(float(total_billing["billing"]), 2)
 
-    title = f"{start}～{end_yesterday}の請求額：{total:.2f} USD"
+    title = f"{start}～{end_yesterday}のAWS請求額：{total:.2f} USD"
 
     details = []
     for item in service_billings:
@@ -140,11 +161,21 @@ def get_total_cost_date_range() -> Tuple[str, str]:
 
 
 # シークレットマネージャからシークレットを取得する関数
-def get_secret(secret_name: str, secret_key: str) -> str:
+def get_secret(secret_name: Optional[str], secret_key: str) -> Any:
+    # シークレット名を取得
+    if secret_name is None:
+        raise ValueError("Secret name must not be None")
     secrets_extension_endpoint = (
         "http://localhost:2773/secretsmanager/get?secretId=" + secret_name
     )
-    headers = {"X-Aws-Parameters-Secrets-Token": os.environ.get("AWS_SESSION_TOKEN")}
+
+    # ヘッダーにAWSセッショントークンを設定
+    aws_session_token = os.environ.get("AWS_SESSION_TOKEN")
+    if aws_session_token is None:
+        raise ValueError("aws sessuib token must not be None")
+    headers = {"X-Aws-Parameters-Secrets-Token": aws_session_token}
+
+    # シークレットマネージャからシークレットを取得
     secrets_extension_req = request.Request(secrets_extension_endpoint, headers=headers)
     with request.urlopen(secrets_extension_req) as response:
         secret_config = response.read()
@@ -154,7 +185,7 @@ def get_secret(secret_name: str, secret_key: str) -> str:
 
 
 # HTTPリクエストを送信する関数
-def send_request(url: str, data: str, headers=None) -> None:
+def send_request(url: str, data: bytes, headers: MutableMapping[str, str]) -> None:
     req = request.Request(url, data=data, headers=headers, method="POST")
     with request.urlopen(req) as response:
         print(response.status)
