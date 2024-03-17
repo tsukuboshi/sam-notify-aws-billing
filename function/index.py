@@ -28,10 +28,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
         slack_secret_name = os.environ.get("SLACK_SECRET_NAME")
         line_secret_name = os.environ.get("LINE_SECRET_NAME")
 
-        sns = boto3.client("sns")
-
         # メール用トピックが設定されている場合は、メール用トピックにメッセージを送信する
         if mail_topic_arn:
+            sns = boto3.client("sns")
             sns.publish(
                 TopicArn=mail_topic_arn,
                 Subject=title,
