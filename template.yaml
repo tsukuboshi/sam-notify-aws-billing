@@ -18,7 +18,7 @@ Parameters:
     Type: Number
     Default: 1
     MinValue: 1
-    MaxValue: 30
+    MaxValue: 31
     Description: "Choose the interval of notification. (1-30)"
   EmailAddress:
     Type: String
@@ -148,7 +148,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${AWS::StackName}-nab-function
       Handler: index.lambda_handler
-      Runtime: python3.11
+      Runtime: python3.12
       Role: !GetAtt NABFunctionRole.Arn
       Timeout: 60
       Layers:
