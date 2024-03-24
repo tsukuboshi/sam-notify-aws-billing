@@ -19,7 +19,7 @@ Parameters:
     Default: 1
     MinValue: 1
     MaxValue: 31
-    Description: "Choose the interval of notification. (1-30)"
+    Description: "Choose the interval of notification. (1-31)"
   EmailAddress:
     Type: String
     Default: ""
