@@ -44,8 +44,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
                 "text": title,
                 "blocks": [
                     {"type": "header", "text": {"type": "plain_text", "text": title}},
-                    {"type": "section", "text": {"type": "mrkdwn", "text": detail}},
-                    {"type": "divider"},
+                    {"type": "section", "text": {"type": "plain_text", "text": detail}},
                 ],
             }
             data = json.dumps(payload).encode()
