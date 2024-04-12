@@ -1,0 +1,234 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Notify AWS Billing (NAB)
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Notification Settings"
+        Parameters:
+          - NotifyDaysInterval
+          - EmailAddress
+          - SlackWebhookUrl
+          - LineAccessToken
+
+Parameters:
+  NotifyDaysInterval:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 31
+    Description: "Choose the interval of notification. (1-31)"
+  EmailAddress:
+    Type: String
+    Default: ""
+    Description: "If you want to notify by Email, set Email Address. If not, leave it blank."
+  SlackWebhookUrl:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: "If you want to notify by Slack, set Slack Webhook URL. If not, leave it blank."
+  LineAccessToken:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: "If you want to notify by LINE, set LINE Notify Access Token. If not, leave it blank."
+
+Conditions:
+  OnEmail: !Not [!Equals [!Ref EmailAddress, ""]]
+  OnSlack: !Not [!Equals [!Ref SlackWebhookUrl, ""]]
+  OnLine: !Not [!Equals [!Ref LineAccessToken, ""]]
+
+Resources:
+  NABTopicToEmail:
+    Type: AWS::SNS::Topic
+    Condition : OnEmail
+    Properties:
+      TopicName: !Sub ${AWS::StackName}-nab-topic
+      Subscription:
+        - Endpoint: !Ref EmailAddress
+          Protocol: email
+
+  NABSecretForSlack:
+    Type: AWS::SecretsManager::Secret
+    Condition : OnSlack
+    Properties:
+      Description: "Slack Webhook URL"
+      SecretString: !Sub '{"info": "${SlackWebhookUrl}"}'
+      Name: !Sub /${AWS::StackName}-nab-secret/slack
+
+  NABSecretForLine:
+    Type: AWS::SecretsManager::Secret
+    Condition : OnLine
+    Properties:
+      Description: "LINE Access Token"
+      SecretString: !Sub '{"info": "${LineAccessToken}"}'
+      Name: !Sub /${AWS::StackName}-nab-secret/line
+
+  NABFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-nab-function-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  NABCEAccessPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub ${AWS::StackName}-nab-ce-access-policy
+      Roles:
+        - !Ref NABFunctionRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - "ce:GetCostAndUsage"
+            Resource: "*"
+          # - Effect: Allow
+          #   Action:
+          #     - "logs:CreateLogGroup"
+          #     - "logs:CreateLogStream"
+          #     - "logs:PutLogEvents"
+          #   Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+
+  NABEmailPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: OnEmail
+    Properties:
+      ManagedPolicyName: !Sub ${AWS::StackName}-nab-email-policy
+      Roles:
+        - !Ref NABFunctionRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - "sns:publish"
+            Resource: !Ref NABTopicToEmail
+
+  NABSlackPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: OnSlack
+    Properties:
+      ManagedPolicyName: !Sub ${AWS::StackName}-nab-slack-policy
+      Roles:
+      - !Ref NABFunctionRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - "secretsmanager:GetSecretValue"
+            Resource: !Ref NABSecretForSlack
+
+  NABLinePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: OnLine
+    Properties:
+      ManagedPolicyName: !Sub ${AWS::StackName}-nab-line-policy
+      Roles:
+      - !Ref NABFunctionRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - "secretsmanager:GetSecretValue"
+            Resource: !Ref NABSecretForLine
+
+  NABFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-nab-function
+      Handler: index.lambda_handler
+      Runtime: python3.12
+      Role: !GetAtt NABFunctionRole.Arn
+      Timeout: 60
+      LoggingConfig:
+        LogFormat: JSON
+        ApplicationLogLevel: INFO
+        SystemLogLevel: INFO
+      Layers:
+        - arn:aws:lambda:ap-northeast-1:133490724326:layer:AWS-Parameters-and-Secrets-Lambda-Extension:4
+      Environment:
+        Variables:
+          MAIL_TOPIC_ARN: !If
+            - OnEmail
+            - !Ref NABTopicToEmail
+            - !Ref AWS::NoValue
+          SLACK_SECRET_NAME: !If
+            - OnSlack
+            - !Sub /${AWS::StackName}-nab-secret/slack
+            - !Ref AWS::NoValue
+          LINE_SECRET_NAME: !If
+            - OnLine
+            - !Sub /${AWS::StackName}-nab-secret/line
+            - !Ref AWS::NoValue
+      CodeUri: function/
+
+  # NABRule:
+  #   Type: AWS::Events::Rule
+  #   Properties:
+  #     EventBusName: default
+  #     Name: !Sub ${AWS::StackName}-nab-rule
+  #     ScheduleExpression: !Sub cron(0 0 */${NotifyDaysInterval} * ? *)
+  #     State: ENABLED
+  #     Targets:
+  #       - Arn: !GetAtt NABFunction.Arn
+  #         Id: NABFunction
+
+  # PermissionForEventsToInvokeLambda:
+  #   Type: AWS::Lambda::Permission
+  #   Properties:
+  #     FunctionName: !Ref NABFunction
+  #     Action: lambda:InvokeFunction
+  #     Principal: events.amazonaws.com
+  #     SourceArn: !GetAtt NABRule.Arn
+
+  NABFunctionScheduler:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub ${AWS::StackName}-nab-function-scheduler
+      Description: "Start Notify AWS Billing Function"
+      ScheduleExpression: !Sub cron(0 9 */${NotifyDaysInterval} * ? *)
+      ScheduleExpressionTimezone: "Asia/Tokyo"
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      State: ENABLED
+      Target:
+        Arn: !GetAtt NABFunction.Arn
+        RoleArn: !GetAtt NABFunctionSchedulerRole.Arn
+
+  NABFunctionSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-nab-function-scheduler-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaRole
+
+Outputs:
+  FunctionArn:
+    Description: "Lambda Function ARN"
+    Value: !GetAtt NABFunction.Arn
+  # EventBridgeRuleArn:
+  #   Description: "EventBridge Rule ARN"
+  #   Value: !GetAtt NABRule.Arn
+  SchedulerArn:
+    Description: "Scheduler ARN"
+    Value: !GetAtt NABFunctionScheduler.Arn
