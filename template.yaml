@@ -9,6 +9,7 @@ Metadata:
           default: "Notification Settings"
         Parameters:
           - NotifyDaysInterval
+          - DisplayAccountId
           - EmailAddress
           - SlackWebhookUrl
           - LineAccessToken
@@ -20,6 +21,13 @@ Parameters:
     MinValue: 1
     MaxValue: 31
     Description: "Choose the interval of notification. (1-31)"
+  DisplayAccountId:
+    Type: String
+    Default: false
+    AllowedValues:
+      - true
+      - false
+    Description: "If you want to add the account ID to the notification message, set true. If not, set false."
   EmailAddress:
     Type: String
     Default: ""
@@ -39,6 +47,7 @@ Conditions:
   OnEmail: !Not [!Equals [!Ref EmailAddress, ""]]
   OnSlack: !Not [!Equals [!Ref SlackWebhookUrl, ""]]
   OnLine: !Not [!Equals [!Ref LineAccessToken, ""]]
+  OnAccountId: !Equals [!Ref DisplayAccountId, true]
 
 Resources:
   NABTopicToEmail:
@@ -93,12 +102,6 @@ Resources:
             Action:
               - "ce:GetCostAndUsage"
             Resource: "*"
-          # - Effect: Allow
-          #   Action:
-          #     - "logs:CreateLogGroup"
-          #     - "logs:CreateLogStream"
-          #     - "logs:PutLogEvents"
-          #   Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
 
   NABEmailPolicy:
     Type: AWS::IAM::ManagedPolicy
@@ -161,6 +164,10 @@ Resources:
         - arn:aws:lambda:ap-northeast-1:133490724326:layer:AWS-Parameters-and-Secrets-Lambda-Extension:4
       Environment:
         Variables:
+          ACCOUNT_ID: !If
+            - OnAccountId
+            - !Sub ${AWS::AccountId}
+            - !Ref AWS::NoValue
           MAIL_TOPIC_ARN: !If
             - OnEmail
             - !Ref NABTopicToEmail
@@ -174,25 +181,6 @@ Resources:
             - !Sub /${AWS::StackName}-nab-secret/line
             - !Ref AWS::NoValue
       CodeUri: function/
-
-  # NABRule:
-  #   Type: AWS::Events::Rule
-  #   Properties:
-  #     EventBusName: default
-  #     Name: !Sub ${AWS::StackName}-nab-rule
-  #     ScheduleExpression: !Sub cron(0 0 */${NotifyDaysInterval} * ? *)
-  #     State: ENABLED
-  #     Targets:
-  #       - Arn: !GetAtt NABFunction.Arn
-  #         Id: NABFunction
-
-  # PermissionForEventsToInvokeLambda:
-  #   Type: AWS::Lambda::Permission
-  #   Properties:
-  #     FunctionName: !Ref NABFunction
-  #     Action: lambda:InvokeFunction
-  #     Principal: events.amazonaws.com
-  #     SourceArn: !GetAtt NABRule.Arn
 
   NABFunctionScheduler:
     Type: AWS::Scheduler::Schedule
@@ -226,9 +214,6 @@ Outputs:
   FunctionArn:
     Description: "Lambda Function ARN"
     Value: !GetAtt NABFunction.Arn
-  # EventBridgeRuleArn:
-  #   Description: "EventBridge Rule ARN"
-  #   Value: !GetAtt NABRule.Arn
   SchedulerArn:
     Description: "Scheduler ARN"
     Value: !GetAtt NABFunctionScheduler.Arn

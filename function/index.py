@@ -120,7 +120,14 @@ def create_message(total_billing: dict, service_billings: list) -> Tuple[str, st
 
     total = round(float(total_billing["billing"]), 2)
 
-    title = f"AWS Billing Notification ({start}～{end_yesterday}) : {total:.2f} USD"
+    account_id = os.environ.get("ACCOUNT_ID")
+
+    raw_title = f"AWS Billing Notification ({start}～{end_yesterday}) : {total:.2f} USD"
+
+    if account_id:
+        title = f"{account_id} - {raw_title}"
+    else:
+        title = raw_title
 
     details = []
     for item in service_billings:
